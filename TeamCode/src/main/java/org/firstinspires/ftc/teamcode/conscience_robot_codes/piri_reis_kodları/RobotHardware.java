@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.conscience_robot_codes;
+package org.firstinspires.ftc.teamcode.conscience_robot_codes.piri_reis_kodları;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.CRServo;

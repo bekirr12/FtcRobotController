@@ -1,8 +1,8 @@
-package org.firstinspires.ftc.teamcode.conscience_robot_codes;
+package org.firstinspires.ftc.teamcode.conscience_robot_codes.piri_reis_kodları;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
-import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 /**
@@ -10,6 +10,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
  * the chosen mode (Auto or TeleOp) during RUN. It relies on RobotHardware.java
  * for all motor control and hardware logic.
  */
+@Disabled
 @Autonomous(name = "Auto_and_TeleOp", group = "Competition")
 public class Auto_and_TeleOp extends LinearOpMode {
 
