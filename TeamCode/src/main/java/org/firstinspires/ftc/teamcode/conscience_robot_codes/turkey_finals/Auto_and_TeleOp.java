@@ -2,7 +2,6 @@ package org.firstinspires.ftc.teamcode.conscience_robot_codes.turkey_finals;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
-import com.qualcomm.robotcore.util.ElapsedTime;
 import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
 
 /**
@@ -33,23 +32,17 @@ public class Auto_and_TeleOp extends LinearOpMode {
 
     private String operationSelected = TELEOP;
     private double activeShotVelocity = 0;
-    private ElapsedTime shotTimer = new ElapsedTime();
-    // private final double SHOT_DURATION = 1.5;
 
-
-    // =========================================================================
     // MAIN EXECUTION FLOW (runOpMode)
-    // =========================================================================
-
     @Override
     public void runOpMode() throws InterruptedException {
         robot.init(this, hardwareMap);
         telemetry.addData("Status", "Sniper System Initialized");
+        telemetry.addData("Info", "Press PS to cycle modes");
 
         while (!isStarted() && !isStopRequested()) {
             if (gamepad1.psWasPressed()) {
                 operationSelected = selectOperation(operationSelected);
-                // sleep(250);
             }
             updateSelectionTelemetry();
             idle();
@@ -68,10 +61,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
         }
     }
 
-    // -------------------------------------------------------------------------
     // TELEOP STATE MACHINE EXECUTION
-    // -------------------------------------------------------------------------
-
     private void doTeleOpStateful() {
         while (opModeIsActive()) {
 
@@ -98,7 +88,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
         }
     }
 
-    // --- STATE HANDLER METHODS ---
+    // STATE HANDLER METHODS
 
     private void handleManualState() {
         double x_s = gamepad2.left_stick_x;
@@ -107,62 +97,37 @@ public class Auto_and_TeleOp extends LinearOpMode {
         manualMechanismControlLogic();
 
         if (gamepad1.right_trigger > 0.5) {
-                currentState = RobotState.AUTO_ALIGN;
+            currentState = RobotState.AUTO_ALIGN;
         }
-        /*
-        if (gamepad1.right_trigger > 0.5) {
-            if (handleSmartShotPreparation()) {
-                currentState = RobotState.SHOOTING;
-                return;
-            }
-        }
-        */
     }
-    /*
-    private boolean handleSmartShotPreparation() {
-        AprilTagDetection tag = robot.getLatestTargetDetection();
-
-        if (tag != null) {
-            double dist = tag.ftcPose.range;
-            calculatedShotVelocity = robot.calculateTargetVelocity(dist);
-            telemetry.addData("Range", dist);
-
-            if (calculatedShotVelocity > 0) {
-                shotTimer.reset();
-                return true;
-            }
-        } else {
-            telemetry.addData("Shot Failed", "Target not visible!");
-        }
-        return false;
-    }
-    */
 
     private void handleAutoAlignState() {
         boolean aligned = robot.updateAngularAlignment();
 
         if (gamepad1.right_trigger < 0.1) {
             robot.stopDrive();
+            robot.resetIntegralSum();
             currentState = RobotState.MANUAL_DRIVE;
             return;
         }
 
-        if (aligned) {
+        if (aligned && robot.getCalculatedShotVelocity() > 0) {
+            activeShotVelocity = robot.getCalculatedShotVelocity();
             robot.stopDrive();
+            robot.setShooterVelocity(activeShotVelocity);
             currentState = RobotState.SHOOTING;
         }
 
-        telemetry.addData("Aiming", "Angle Error: %.2f | Range: %.2f in",
-                robot.getLatestTargetDetection() != null ? robot.getLatestTargetDetection().ftcPose.bearing : 999.0,
-                robot.getLatestTargetDetection() != null ? robot.getLatestTargetDetection().ftcPose.range : 0.0);
+        AprilTagDetection tag = robot.getLatestTargetDetection();
+        if (tag != null) {
+            telemetry.addData("Aiming", "Error: %.1f° | Range: %.1f in",
+                    tag.ftcPose.bearing, tag.ftcPose.range);
+        } else {
+            telemetry.addData("Aiming", "TARGET LOST");
+        }
     }
 
     private void handleShootingState() {
-        activeShotVelocity = robot.calculatedShotVelocity;
-
-        robot.stopDrive();
-        robot.setShooterVelocity(activeShotVelocity);
-
         if (gamepad1.right_trigger < 0.1) {
             currentState = RobotState.RESET;
             return;
@@ -170,13 +135,11 @@ public class Auto_and_TeleOp extends LinearOpMode {
 
         if (robot.flywheel.getVelocity() >= activeShotVelocity - 50) {
             robot.setFeederPower(1.0);
+            telemetry.addData("Shot Status", "FIRING %.0f ticks/sec", activeShotVelocity);
+        } else {
+            telemetry.addData("Shot Status", "Spooling... %.0f / %.0f",
+                    robot.flywheel.getVelocity(), activeShotVelocity);
         }
-        /*
-        if (shotTimer.seconds() > SHOT_DURATION) {
-            currentState = RobotState.RESET;
-        }
-        */
-
     }
 
     private void handleResetState() {
@@ -186,11 +149,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
         currentState = RobotState.MANUAL_DRIVE;
     }
 
-
-    // -------------------------------------------------------------------------
-    // ORIGINAL/PRESERVED LOGIC (AUTO & HELPERS)
-    // -------------------------------------------------------------------------
-
+    // Manuel control helper function
     private void manualMechanismControlLogic() {
         robot.updateSpeedMultiplier(gamepad2.dpadUpWasPressed(), gamepad2.dpadDownWasPressed());
 
@@ -243,15 +202,17 @@ public class Auto_and_TeleOp extends LinearOpMode {
             double dist = tag.ftcPose.range;
             double calculatedVel = robot.calculateTargetVelocity(dist);
 
-            telemetry.addData("Auto Status", "Aiming...");
+            telemetry.addData("Auto Status", "Aligning to target...");
+            telemetry.addData("Range", "%.1f inches", dist);
+            telemetry.addData("Calc Velocity", "%.0f ticks/sec", calculatedVel);
             telemetry.update();
 
-            // Robot tam olarak hizalanana kadar bekler
+            // Wait for PID alignment to complete
             while (opModeIsActive() && !robot.updateAngularAlignment()) {
                 idle();
             }
 
-            if (robot.updateAngularAlignment()) {
+            if (robot.updateAngularAlignment() && calculatedVel > 0) {
                 robot.setShooterVelocity(calculatedVel);
 
                 // ElapsedTime spoolTimer = new ElapsedTime();
@@ -262,17 +223,18 @@ public class Auto_and_TeleOp extends LinearOpMode {
                 }
 
                 robot.setFeederPower(1.0);
-                sleep(5000);
+                sleep(3000);
             }
 
         } else {
             telemetry.addData("WARNING", "Tag Not Found. Using Max Velocity.");
             robot.bankShotAuto();
-            sleep(5000);
+            sleep(3000);
         }
 
         robot.setFeederPower(0);
         robot.setShooterVelocity(0);
         robot.stopDrive();
+        robot.resetIntegralSum();
     }
 }

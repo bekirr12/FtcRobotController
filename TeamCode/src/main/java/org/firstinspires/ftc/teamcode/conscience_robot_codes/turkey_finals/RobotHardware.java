@@ -21,6 +21,13 @@ import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
 
 import java.util.List;
 
+/**
+* Hardware Abstraction Layer for FTC Robot
+* Handles all sensor fusion, PID control, and hardware interfacing
+
+* Turkey Finals 2025
+*/
+
 public class RobotHardware {
     private LinearOpMode myOpMode = null;
 
@@ -35,17 +42,17 @@ public class RobotHardware {
     private VisionPortal visionPortal;
     private AprilTagProcessor aprilTag;
 
-    // constants
-    public double speedMultiplier;
+    // manuel velocity constants
     public final int bankVelocity = 1350;
     public final int farVelocity = 1550;
     public final int maxVelocity = 2200;
+
+    // Drive encoder conversion constant
     public final double WHEELS_INCHES_TO_TICKS = (28 * 5 * 3) / (3 * Math.PI);
 
-    public final int TARGET_TAG_ID = 20; // for blue goal
-    // public final int TARGET_TAG_ID = 24; // for red goal
+    public final int TARGET_TAG_ID = 20; // for blue goal (change to 24 for red)
 
-    // constants for linear interpolation (Buraları robotun üstünde test et düzenle)
+    // Linear interpolation constants (Buraları robotun üstünde test et düzenle)
     public final double DIST_1_CLOSE = 15.0;
     public final int    VEL_1_CLOSE  = 1450;
     public final double DIST_2_MID   = 30.0;
@@ -55,21 +62,22 @@ public class RobotHardware {
     public final double DIST_4_MAX   = 60.0;
     public final int    VEL_4_MAX    = 2400;
 
-    // PID-Controller Gains
-    final double TURN_GAIN = 0.02;     // P-Gain (Kp)
-    final double DERIVATIVE_GAIN = 0.005;    // D-Gain (Kd)
-    final double MAX_AUTO_TURN = 0.4;
-    final double INTEGRAL_GAIN = 0.005; // I-Gain (Ki)
-    final double INTEGRAL_MAX = 5.0;
-    private double integralSum = 0;
+    // PID-Controller Gains (Tune these to fit your robot)
+    private final double TURN_GAIN = 0.03; // P-Gain (Kp)
+    private final double DERIVATIVE_GAIN = 0.015;    // D-Gain (Kd)
+    private final double INTEGRAL_GAIN = 0.005; // I-Gain (Ki)
+    private final double MAX_AUTO_TURN = 0.4;
+    private final double INTEGRAL_MAX = 5.0;
     public final double ALIGN_HEADING_TOLERANCE = 1.0;
+    private final double YAW_RATE_STOP_THRESHOLD = 5.0;
+
+    private double integralSum = 0;
+    public double calculatedShotVelocity = 0;
+    private double speedMultiplier = 0.5;
 
     // timers
     private ElapsedTime autoDriveTimer;
     public ElapsedTime autoLaunchTimer;
-
-    // calculated velocity
-    public double calculatedShotVelocity = 0;
 
     // initialization method
     public void init(LinearOpMode opMode, HardwareMap hwMap) {
@@ -99,20 +107,25 @@ public class RobotHardware {
         servo.setPower(0);
         servo2.setPosition(0);
 
-        speedMultiplier = 0.5;
-
         autoLaunchTimer = new ElapsedTime();
         autoDriveTimer = new ElapsedTime();
     }
+
+    /**
+     * Configures the IMU with the correct orientation
+     */
     private void initIMU(HardwareMap hwMap) {
         RevHubOrientationOnRobot orientationOnRobot = new RevHubOrientationOnRobot(
-                RevHubOrientationOnRobot.LogoFacingDirection.UP,
-                RevHubOrientationOnRobot.UsbFacingDirection.FORWARD
+                RevHubOrientationOnRobot.LogoFacingDirection.LEFT,
+                RevHubOrientationOnRobot.UsbFacingDirection.UP
         );
         imu.initialize(new IMU.Parameters(orientationOnRobot));
         imu.resetYaw();
     }
 
+    /**
+     * Configures the AprilTag vision processor
+     */
     private void initAprilTag(HardwareMap hwMap) {
         aprilTag = new AprilTagProcessor.Builder()
                 .setOutputUnits(DistanceUnit.INCH, AngleUnit.DEGREES)
@@ -121,6 +134,14 @@ public class RobotHardware {
                 .setCamera(hwMap.get(WebcamName.class, "Webcam 1"))
                 .addProcessor(aprilTag)
                 .build();
+    }
+
+    // GETTERS (Encapsulation)
+    public double getCalculatedShotVelocity() {
+        return calculatedShotVelocity;
+    }
+    public void resetIntegralSum() {
+        integralSum = 0;
     }
 
     /** Gets the latest detection for the target tag. Returns null if not seen. */
@@ -141,24 +162,34 @@ public class RobotHardware {
         if (distance <= DIST_1_CLOSE) return VEL_1_CLOSE;
         if (distance >= DIST_4_MAX)   return VEL_4_MAX;
 
-        double x1, x2; int y1, y2;
+        double x1, x2;
+        int y1, y2;
 
         if (distance < DIST_2_MID) {
-            x1=DIST_1_CLOSE; y1=VEL_1_CLOSE; x2=DIST_2_MID; y2=VEL_2_MID;
+            x1=DIST_1_CLOSE; y1=VEL_1_CLOSE;
+            x2=DIST_2_MID; y2=VEL_2_MID;
         } else if (distance < DIST_3_FAR) {
-            x1=DIST_2_MID; y1=VEL_2_MID; x2=DIST_3_FAR; y2=VEL_3_FAR;
+            x1=DIST_2_MID; y1=VEL_2_MID;
+            x2=DIST_3_FAR; y2=VEL_3_FAR;
         } else {
-            x1=DIST_3_FAR; y1=VEL_3_FAR; x2=DIST_4_MAX; y2=VEL_4_MAX;
+            x1=DIST_3_FAR; y1=VEL_3_FAR;
+            x2=DIST_4_MAX; y2=VEL_4_MAX;
         }
-
         return (int) (y1 + (distance - x1) * (y2 - y1) / (x2 - x1));
     }
 
-    /** PD CONTROL: Adjusts rotation to face the target using Tag angle (P) and IMU rate (D). */
+    /**
+     * PID-controlled angular alignment to AprilTag target
+     * Uses P-term for correction, D-term for damping, I-term for steady-state
+     * */
     public boolean updateAngularAlignment() {
         AprilTagDetection target = getLatestTargetDetection();
 
-        if (target == null) { stopDrive(); return false; }
+        if (target == null) {
+            stopDrive();
+            resetIntegralSum();
+            return false;
+        }
 
         double headingError = target.ftcPose.bearing;
         double dist = target.ftcPose.range;
@@ -168,7 +199,9 @@ public class RobotHardware {
         // D-Term: Braking force from IMU Yaw Rate
         AngularVelocity angularVelocity = imu.getRobotAngularVelocity(AngleUnit.DEGREES);
         double yawRate = angularVelocity.zRotationRate;
-        double d_term = yawRate * DERIVATIVE_GAIN;
+
+        // D-Term: Derivative correction
+        double d_term = -yawRate * DERIVATIVE_GAIN;
 
         // P-Term: Proportional correction
         double p_term = headingError * TURN_GAIN;
@@ -187,19 +220,28 @@ public class RobotHardware {
 
         // Stop Condition (Aligned AND Stopped)
         if (Math.abs(headingError) < ALIGN_HEADING_TOLERANCE && calculatedShotVelocity > 0) {
-            if (Math.abs(yawRate) < 5.0) { // Check if robot is actually stopped
+            if (Math.abs(yawRate) < YAW_RATE_STOP_THRESHOLD) { // Check if robot is actually stopped
                 stopDrive();
+                resetIntegralSum();
                 return true;
             }
         }
-
         return false;
     }
 
-    public void setShooterVelocity(double velocity) { flywheel.setVelocity(velocity); }
-    public void setFeederPower(double power) { coreHex.setPower(power); servo.setPower(power); }
-    public void stopDrive() { leftDrive.setPower(0); rightDrive.setPower(0); }
+    // Shooter Control Methods
+    public void setShooterVelocity(double velocity) {
+        flywheel.setVelocity(velocity);
+    }
 
+    public void setFeederPower(double power) {
+        coreHex.setPower(power);
+        servo.setPower(power);
+    }
+
+    public void stopDrive() {
+        leftDrive.setPower(0); rightDrive.setPower(0);
+    }
 
     /** Sets the launcher for close shooting and activates the feeder. */
     public void bankShotAuto() {
@@ -235,15 +277,9 @@ public class RobotHardware {
     /** Updates the robot's speed multiplier. */
     public void updateSpeedMultiplier(boolean dpadUpPressed, boolean dpadDownPressed) {
         if (dpadUpPressed) {
-            speedMultiplier = speedMultiplier + 0.1;
-            if (speedMultiplier > 1) {
-                speedMultiplier = 1;
-            }
+            speedMultiplier = Math.min(speedMultiplier + 0.1, 1.0);
         } else if (dpadDownPressed) {
-            speedMultiplier = speedMultiplier - 0.1;
-            if (speedMultiplier < 0.1) {
-                speedMultiplier = 0.1;
-            }
+            speedMultiplier = Math.max(speedMultiplier - 0.1, 0.1);
         }
     }
 
