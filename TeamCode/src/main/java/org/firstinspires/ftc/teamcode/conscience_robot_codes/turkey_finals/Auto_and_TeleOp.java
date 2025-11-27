@@ -102,13 +102,24 @@ public class Auto_and_TeleOp extends LinearOpMode {
     }
 
     private void handleAutoAlignState() {
-        boolean aligned = robot.updateAngularAlignment();
+        AprilTagDetection tag = robot.getLatestTargetDetection();
+        boolean aligned = false;
 
         if (gamepad1.right_trigger < 0.1) {
-            robot.stopDrive();
-            robot.resetIntegralSum();
-            currentState = RobotState.MANUAL_DRIVE;
+            currentState = RobotState.RESET;
             return;
+        }
+
+        if (tag != null) {
+            aligned = robot.updateAngularAlignment(tag);
+            telemetry.addData("Aiming", "Error: %.1f° | Range: %.1f in",
+                    tag.ftcPose.bearing, tag.ftcPose.range);
+        } else {
+            gamepad2.rumble(1.0, 1.0, 200);
+            telemetry.addData("Aiming", "TARGET LOST");
+            currentState = RobotState.RESET;
+            // robot.stopDrive();
+            // robot.resetIntegralSum();
         }
 
         if (aligned && robot.getCalculatedShotVelocity() > 0) {
@@ -116,14 +127,6 @@ public class Auto_and_TeleOp extends LinearOpMode {
             robot.stopDrive();
             robot.setShooterVelocity(activeShotVelocity);
             currentState = RobotState.SHOOTING;
-        }
-
-        AprilTagDetection tag = robot.getLatestTargetDetection();
-        if (tag != null) {
-            telemetry.addData("Aiming", "Error: %.1f° | Range: %.1f in",
-                    tag.ftcPose.bearing, tag.ftcPose.range);
-        } else {
-            telemetry.addData("Aiming", "TARGET LOST");
         }
     }
 
@@ -146,6 +149,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
         robot.setFeederPower(0);
         robot.setShooterVelocity(0);
         robot.stopDrive();
+        robot.resetIntegralSum();
         currentState = RobotState.MANUAL_DRIVE;
     }
 
@@ -208,11 +212,11 @@ public class Auto_and_TeleOp extends LinearOpMode {
             telemetry.update();
 
             // Wait for PID alignment to complete
-            while (opModeIsActive() && !robot.updateAngularAlignment()) {
+            while (opModeIsActive() && !robot.updateAngularAlignment(tag)) {
                 idle();
             }
 
-            if (robot.updateAngularAlignment() && calculatedVel > 0) {
+            if (robot.updateAngularAlignment(tag) && calculatedVel > 0) {
                 robot.setShooterVelocity(calculatedVel);
 
                 // ElapsedTime spoolTimer = new ElapsedTime();

@@ -182,7 +182,8 @@ public class RobotHardware {
      * PID-controlled angular alignment to AprilTag target
      * Uses P-term for correction, D-term for damping, I-term for steady-state
      * */
-    public boolean updateAngularAlignment() {
+    public boolean updateAngularAlignment(AprilTagDetection target) {
+        /*
         AprilTagDetection target = getLatestTargetDetection();
 
         if (target == null) {
@@ -190,6 +191,8 @@ public class RobotHardware {
             resetIntegralSum();
             return false;
         }
+
+         */
 
         double headingError = target.ftcPose.bearing;
         double dist = target.ftcPose.range;
@@ -200,11 +203,11 @@ public class RobotHardware {
         AngularVelocity angularVelocity = imu.getRobotAngularVelocity(AngleUnit.DEGREES);
         double yawRate = angularVelocity.zRotationRate;
 
-        // D-Term: Derivative correction
-        double d_term = -yawRate * DERIVATIVE_GAIN;
-
         // P-Term: Proportional correction
         double p_term = headingError * TURN_GAIN;
+
+        // D-Term: Derivative correction
+        double d_term = -yawRate * DERIVATIVE_GAIN;
 
         // I-Term: Integral correction
         integralSum += headingError;
