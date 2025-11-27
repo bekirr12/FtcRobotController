@@ -36,11 +36,13 @@ public class RobotHardware {
     public DcMotor coreHex = null;
     public DcMotor leftDrive = null;
     public DcMotor rightDrive = null;
-    public CRServo servo = null;
-    public Servo servo2 = null;
+    public CRServo hopperServo = null;
+    public Servo gateServo = null;
+    public Servo turretServo = null;
     public IMU imu = null;
     private VisionPortal visionPortal;
     private AprilTagProcessor aprilTag;
+    private HybridShooterController shooterController;
 
     // manuel velocity constants
     public final int bankVelocity = 1350;
@@ -71,9 +73,17 @@ public class RobotHardware {
     public final double ALIGN_HEADING_TOLERANCE = 1.0;
     private final double YAW_RATE_STOP_THRESHOLD = 5.0;
 
+    // Launcher control
+    private final double MAX_TURRET_RATE = 0.10;  // Max servo değişim hızı (per 20ms cycle)
+    private final double TURRET_SETTLING_TIME_MS = 150;  // Servo oturma süresi
+    private double lastTurretPosition = 0.5;  // Son komut edilen pozisyon
+    private ElapsedTime turretTimer;
+
     private double integralSum = 0;
     public double calculatedShotVelocity = 0;
+    public double calculatedTurretAngle = 0;
     private double speedMultiplier = 0.5;
+    private int calibrationVelocity = 1000;
 
     // timers
     private ElapsedTime autoDriveTimer;
@@ -88,12 +98,15 @@ public class RobotHardware {
         coreHex = hwMap.get(DcMotor.class, "coreHex");
         leftDrive = hwMap.get(DcMotor.class, "leftDrive");
         rightDrive = hwMap.get(DcMotor.class, "rightDrive");
-        servo = hwMap.get(CRServo.class, "servo");
-        servo2 = hwMap.get(Servo.class, "servo2");
+        hopperServo = hwMap.get(CRServo.class, "hopperServo");
+        gateServo = hwMap.get(Servo.class, "gateServo");
+        turretServo = hwMap.get(Servo.class, "turretServo");
         imu = hwMap.get(IMU.class, "imu");
 
         initIMU(hwMap);
         initAprilTag(hwMap);
+
+        shooterController = new HybridShooterController();
 
         flywheel.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         flywheel.setDirection(DcMotor.Direction.REVERSE);
@@ -104,11 +117,15 @@ public class RobotHardware {
         leftDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         rightDrive.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 
-        servo.setPower(0);
-        servo2.setPosition(0);
+        hopperServo.setPower(0);
+        gateServo.setPosition(0);
+
+        turretServo.setPosition(0.5);
+        lastTurretPosition = 0.5;
 
         autoLaunchTimer = new ElapsedTime();
         autoDriveTimer = new ElapsedTime();
+        turretTimer = new ElapsedTime();
     }
 
     /**
@@ -140,6 +157,9 @@ public class RobotHardware {
     public double getCalculatedShotVelocity() {
         return calculatedShotVelocity;
     }
+    public double getCalculatedTurretAngle() {
+        return calculatedTurretAngle;
+    }
     public void resetIntegralSum() {
         integralSum = 0;
     }
@@ -157,7 +177,7 @@ public class RobotHardware {
         return null;
     }
 
-    /** Calculates the ideal flywheel velocity using 4-point interpolation based on distance. */
+    /* Calculates the ideal flywheel velocity using 4-point interpolation based on distance.
     public int calculateTargetVelocity(double distance) {
         if (distance <= DIST_1_CLOSE) return VEL_1_CLOSE;
         if (distance >= DIST_4_MAX)   return VEL_4_MAX;
@@ -177,6 +197,11 @@ public class RobotHardware {
         }
         return (int) (y1 + (distance - x1) * (y2 - y1) / (x2 - x1));
     }
+    */
+
+    /**
+    Hybrid System: PID alignment + turret angle control
+     */
 
     /**
      * PID-controlled angular alignment to AprilTag target
@@ -197,7 +222,11 @@ public class RobotHardware {
         double headingError = target.ftcPose.bearing;
         double dist = target.ftcPose.range;
 
-        calculatedShotVelocity = calculateTargetVelocity(dist);
+        // calculatedShotVelocity = calculateTargetVelocity(dist);
+        calculatedShotVelocity = shooterController.calculateVelocity(dist); // new
+        calculatedTurretAngle = shooterController.calculateAngle(dist);     // new
+
+        boolean turretReady = updateTurretPosition(calculatedTurretAngle);
 
         // D-Term: Braking force from IMU Yaw Rate
         AngularVelocity angularVelocity = imu.getRobotAngularVelocity(AngleUnit.DEGREES);
@@ -215,21 +244,73 @@ public class RobotHardware {
         double i_term = integralSum * INTEGRAL_GAIN;
 
         double totalTurnPower = p_term + i_term + d_term;
+        double clippedTurnPower = Range.clip(totalTurnPower, -MAX_AUTO_TURN, MAX_AUTO_TURN);
 
         // Apply Power
-        double clippedTurnPower = Range.clip(totalTurnPower, -MAX_AUTO_TURN, MAX_AUTO_TURN);
         leftDrive.setPower(clippedTurnPower);
         rightDrive.setPower(-clippedTurnPower);
 
         // Stop Condition (Aligned AND Stopped)
-        if (Math.abs(headingError) < ALIGN_HEADING_TOLERANCE && calculatedShotVelocity > 0) {
-            if (Math.abs(yawRate) < YAW_RATE_STOP_THRESHOLD) { // Check if robot is actually stopped
-                stopDrive();
-                resetIntegralSum();
-                return true;
-            }
+        boolean angularAligned = Math.abs(headingError) < ALIGN_HEADING_TOLERANCE &&
+                Math.abs(yawRate) < YAW_RATE_STOP_THRESHOLD;
+
+        if (angularAligned && turretReady && calculatedShotVelocity > 0) {
+            stopDrive();
+            resetIntegralSum();
+            return true;
         }
         return false;
+    }
+
+    private boolean updateTurretPosition(double targetPosition) {
+        double delta = targetPosition - lastTurretPosition;
+        if (Math.abs(delta) > MAX_TURRET_RATE) {
+            delta = Math.copySign(MAX_TURRET_RATE, delta);
+            targetPosition = lastTurretPosition + delta;
+        }
+
+        turretServo.setPosition(targetPosition);
+        lastTurretPosition = targetPosition;
+
+        return Math.abs(delta) < 0.01;
+    }
+
+    /**
+     * YENİ: Manuel turret kontrolü (kalibrasyon için)
+     * D-pad ile 0.01 artımlarla açı ayarı
+     */
+    public void manualTurretControl(boolean dpadUp, boolean dpadDown) {
+        if (turretServo == null) return;
+
+        final double MANUAL_INCREMENT = 0.01;
+
+        if (dpadUp) {
+            lastTurretPosition = Math.min(0.85, lastTurretPosition + MANUAL_INCREMENT);
+        } else if (dpadDown) {
+            lastTurretPosition = Math.max(0.15, lastTurretPosition - MANUAL_INCREMENT);
+        }
+
+        turretServo.setPosition(lastTurretPosition);
+    }
+
+    public int manualVelocityControl(boolean dpadLeft, boolean dpadRight) {
+        final int MANUAL_INCREMENT_VELOCITY = 50;
+
+        if (dpadLeft) {
+            calibrationVelocity = Math.max(0, calibrationVelocity - MANUAL_INCREMENT_VELOCITY);
+        } else if (dpadRight) {
+            calibrationVelocity = Math.min(2400, calibrationVelocity + MANUAL_INCREMENT_VELOCITY);
+        }
+
+        setShooterVelocity(calibrationVelocity);
+        return calibrationVelocity;
+    }
+
+    public void resetTurret() {
+        if (turretServo != null) {
+            turretServo.setPosition(0.5);
+            lastTurretPosition = 0.5;
+        }
     }
 
     // Shooter Control Methods
@@ -239,7 +320,7 @@ public class RobotHardware {
 
     public void setFeederPower(double power) {
         coreHex.setPower(power);
-        servo.setPower(power);
+        hopperServo.setPower(power);
     }
 
     public void stopDrive() {
@@ -249,7 +330,8 @@ public class RobotHardware {
     /** Sets the launcher for close shooting and activates the feeder. */
     public void bankShotAuto() {
         flywheel.setVelocity(bankVelocity);
-        servo.setPower(-1);
+        hopperServo.setPower(-1);
+        turretServo.setPosition(0.5); // test and fix
         if (flywheel.getVelocity() >= bankVelocity - 50) {
             coreHex.setPower(1);
         } else {
@@ -260,7 +342,8 @@ public class RobotHardware {
     /** Sets the launcher for long throw and activates the feeder. */
     public void farPowerAuto() {
         flywheel.setVelocity(farVelocity);
-        servo.setPower(-1);
+        hopperServo.setPower(-1);
+        turretServo.setPosition(0.5); // test and fix
         if (flywheel.getVelocity() >= farVelocity - 100) {
             coreHex.setPower(1);
         } else {
@@ -299,20 +382,20 @@ public class RobotHardware {
 
         // Manual control for the hopper's servo (CRServo)
         if (dpadLeft) {
-            servo.setPower(1);
+            hopperServo.setPower(1);
         } else if (dpadRight) {
-            servo.setPower(-1);
+            hopperServo.setPower(-1);
         } else {
-            servo.setPower(0);
+            hopperServo.setPower(0);
         }
     }
 
     /** Controls the position-based Servo Gate (servo2). */
     public void smartServoGate(boolean dpadUp, boolean dpadDown) {
         if (dpadUp) {
-            servo2.setPosition(0.5);
+            gateServo.setPosition(0.5);
         } else if (dpadDown) {
-            servo2.setPosition(0);
+            gateServo.setPosition(0);
         }
     }
 
@@ -334,7 +417,7 @@ public class RobotHardware {
 
             // Stop the Continuous Servo only if D-pad isn't being pressed
             if (!dpadRight && !dpadLeft) {
-                servo.setPower(0);
+                hopperServo.setPower(0);
             }
         }
     }

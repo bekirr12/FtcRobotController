@@ -9,7 +9,7 @@ import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
 
  FTC Yazilim Ekibi
  Bekir Sami Karatas
- 22.11.2025
+ 27.11.2025
  */
 @TeleOp(name = "TR_Finalleri_Kodu", group = "Competition")
 public class Auto_and_TeleOp extends LinearOpMode {
@@ -29,6 +29,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
     private final String AUTO_BLUE = "AUTO BLUE";
     private final String AUTO_RED = "AUTO RED";
     private final String TELEOP = "TELEOP";
+    private final String CALIBRATION = "CALIBRATION";
 
     private String operationSelected = TELEOP;
     private double activeShotVelocity = 0;
@@ -55,9 +56,67 @@ public class Auto_and_TeleOp extends LinearOpMode {
                 doAutoBlue();
             } else if (operationSelected.equals(AUTO_RED)) {
                 doAutoRed();
+            } else if (operationSelected.equals(CALIBRATION)) {
+                doCalibrationMode();
             } else {
                 doTeleOpStateful();
             }
+
+            telemetry.addData("Flywheel Vel", robot.flywheel.getVelocity());
+            telemetry.addData("left power", robot.leftDrive.getPower());
+            telemetry.addData("right power", robot.rightDrive.getPower());
+            telemetry.addData("hex motor power", robot.coreHex.getPower());
+            telemetry.update();
+        }
+    }
+
+    /**
+     * YENİ: Kalibrasyon modu
+     * Manuel olarak turret açısı ayarlamak için
+     */
+    private void doCalibrationMode() {
+        telemetry.addData("Mode", "CALIBRATION");
+        telemetry.addLine("D-pad Up/Down: Adjust turret");
+        telemetry.addLine("Circle: Exit");
+        telemetry.update();
+
+        while (opModeIsActive()) {
+            robot.manualTurretControl(gamepad1.dpadUpWasPressed(), gamepad1.dpadDownWasPressed());
+            int calibrationVelocity = robot.manualVelocityControl(gamepad1.dpadLeftWasPressed(), gamepad1.dpadRightWasPressed());
+
+            AprilTagDetection tag = robot.getLatestTargetDetection();
+            if (tag != null) {
+                double range = tag.ftcPose.range;
+                double position = tag.ftcPose.bearing;
+                double currentAngle = robot.getCalculatedTurretAngle();
+
+                telemetry.addData("Range", "%.1f inch", range);
+                telemetry.addData("Bearing Error", "%.1f°", position);
+                telemetry.addData("Turret Current Angle", "%.3f", robot.turretServo.getPosition());
+                telemetry.addData("Flywheel Vel", robot.flywheel.getVelocity());
+                telemetry.addData("hex power", robot.coreHex.getPower());
+
+                if (gamepad1.left_trigger > 0.5) {
+                    if (robot.flywheel.getVelocity() >= calibrationVelocity - 50) {
+                        robot.setFeederPower(1.0);
+                    } else {
+                        robot.setFeederPower(0);
+                    }
+                } else {
+                    robot.setFeederPower(0);
+                }
+
+            } else {
+                telemetry.addData("Status", "No AprilTag detected");
+            }
+
+            // Exit
+            if (gamepad1.circle) {
+                break;
+            }
+
+            telemetry.update();
+            idle();
         }
     }
 
@@ -112,8 +171,10 @@ public class Auto_and_TeleOp extends LinearOpMode {
 
         if (tag != null) {
             aligned = robot.updateAngularAlignment(tag);
-            telemetry.addData("Aiming", "Error: %.1f° | Range: %.1f in",
-                    tag.ftcPose.bearing, tag.ftcPose.range);
+            telemetry.addData("Range", "%.1f in", tag.ftcPose.range);
+            telemetry.addData("Bearing Error", "%.1f°", tag.ftcPose.bearing);
+            telemetry.addData("Target Vel", "%.0f", robot.getCalculatedShotVelocity());
+            telemetry.addData("Target Angle", "%.3f", robot.getCalculatedTurretAngle());
         } else {
             gamepad2.rumble(1.0, 1.0, 200);
             telemetry.addData("Aiming", "TARGET LOST");
@@ -136,7 +197,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
             return;
         }
 
-        if (robot.flywheel.getVelocity() >= activeShotVelocity - 50) {
+        if (robot.flywheel.getVelocity() >= activeShotVelocity - 20) {
             robot.setFeederPower(1.0);
             telemetry.addData("Shot Status", "FIRING %.0f ticks/sec", activeShotVelocity);
         } else {
@@ -150,6 +211,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
         robot.setShooterVelocity(0);
         robot.stopDrive();
         robot.resetIntegralSum();
+        robot.resetTurret();
         currentState = RobotState.MANUAL_DRIVE;
     }
 
@@ -173,7 +235,8 @@ public class Auto_and_TeleOp extends LinearOpMode {
         switch (state) {
             case "TELEOP": state = AUTO_BLUE; break;
             case "AUTO BLUE": state = AUTO_RED; break;
-            case "AUTO RED": state = TELEOP; break;
+            case "AUTO RED": state = CALIBRATION; break;
+            case "CALIBRATION": state = "TELEOP"; break; // "CALIBRATION" -> "TELEOP"
             default: state = TELEOP; break;
         }
         return state;
@@ -204,7 +267,8 @@ public class Auto_and_TeleOp extends LinearOpMode {
 
         if (tag != null) {
             double dist = tag.ftcPose.range;
-            double calculatedVel = robot.calculateTargetVelocity(dist);
+            double calculatedVel = robot.getCalculatedShotVelocity();
+            double calculatedAngle = robot.getCalculatedTurretAngle();
 
             telemetry.addData("Auto Status", "Aligning to target...");
             telemetry.addData("Range", "%.1f inches", dist);
@@ -216,11 +280,11 @@ public class Auto_and_TeleOp extends LinearOpMode {
                 idle();
             }
 
-            if (robot.updateAngularAlignment(tag) && calculatedVel > 0) {
+            if (calculatedVel > 0) {
                 robot.setShooterVelocity(calculatedVel);
 
                 // ElapsedTime spoolTimer = new ElapsedTime();
-                while (opModeIsActive() && robot.flywheel.getVelocity() < calculatedVel - 50) {
+                while (opModeIsActive() && robot.flywheel.getVelocity() < calculatedVel - 20) {
                     telemetry.addData("Auto Status", "Spooling: %.0f", robot.flywheel.getVelocity());
                     telemetry.update();
                     idle();
@@ -240,5 +304,6 @@ public class Auto_and_TeleOp extends LinearOpMode {
         robot.setShooterVelocity(0);
         robot.stopDrive();
         robot.resetIntegralSum();
+        robot.resetTurret();
     }
 }
