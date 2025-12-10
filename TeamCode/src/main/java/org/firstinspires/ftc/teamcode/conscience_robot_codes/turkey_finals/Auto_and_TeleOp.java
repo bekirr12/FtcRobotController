@@ -76,23 +76,23 @@ public class Auto_and_TeleOp extends LinearOpMode {
      */
     private void doCalibrationMode() {
         telemetry.addData("Mode", "CALIBRATION");
-        telemetry.addLine("D-pad Up/Down: Adjust turret");
+        // telemetry.addLine("D-pad Up/Down: Adjust turret");
         telemetry.addLine("Circle: Exit");
         telemetry.update();
 
         while (opModeIsActive()) {
-            robot.manualTurretControl(gamepad1.dpadUpWasPressed(), gamepad1.dpadDownWasPressed());
+            // robot.manualTurretControl(gamepad1.dpadUpWasPressed(), gamepad1.dpadDownWasPressed()); // Removed adjustable shooter
             int calibrationVelocity = robot.manualVelocityControl(gamepad1.dpadLeftWasPressed(), gamepad1.dpadRightWasPressed());
 
             AprilTagDetection tag = robot.getLatestTargetDetection();
             if (tag != null) {
                 double range = tag.ftcPose.range;
                 double position = tag.ftcPose.bearing;
-                double currentAngle = robot.getCalculatedTurretAngle();
+                // double currentAngle = robot.getCalculatedTurretAngle();
 
                 telemetry.addData("Range", "%.1f inch", range);
                 telemetry.addData("Bearing Error", "%.1f°", position);
-                telemetry.addData("Turret Current Angle", "%.3f", robot.turretServo.getPosition());
+                // telemetry.addData("Turret Current Angle", "%.3f", robot.turretServo.getPosition());
                 telemetry.addData("Flywheel Vel", robot.flywheel.getVelocity());
                 telemetry.addData("hex power", robot.coreHex.getPower());
 
@@ -174,7 +174,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
             telemetry.addData("Range", "%.1f in", tag.ftcPose.range);
             telemetry.addData("Bearing Error", "%.1f°", tag.ftcPose.bearing);
             telemetry.addData("Target Vel", "%.0f", robot.getCalculatedShotVelocity());
-            telemetry.addData("Target Angle", "%.3f", robot.getCalculatedTurretAngle());
+            // telemetry.addData("Target Angle", "%.3f", robot.getCalculatedTurretAngle());
         } else {
             gamepad2.rumble(1.0, 1.0, 200);
             telemetry.addData("Aiming", "TARGET LOST");
@@ -211,7 +211,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
         robot.setShooterVelocity(0);
         robot.stopDrive();
         robot.resetIntegralSum();
-        robot.resetTurret();
+        // robot.resetTurret();
         currentState = RobotState.MANUAL_DRIVE;
     }
 
@@ -268,7 +268,7 @@ public class Auto_and_TeleOp extends LinearOpMode {
         if (tag != null) {
             double dist = tag.ftcPose.range;
             double calculatedVel = robot.getCalculatedShotVelocity();
-            double calculatedAngle = robot.getCalculatedTurretAngle();
+            // double calculatedAngle = robot.getCalculatedTurretAngle();
 
             telemetry.addData("Auto Status", "Aligning to target...");
             telemetry.addData("Range", "%.1f inches", dist);
@@ -304,6 +304,6 @@ public class Auto_and_TeleOp extends LinearOpMode {
         robot.setShooterVelocity(0);
         robot.stopDrive();
         robot.resetIntegralSum();
-        robot.resetTurret();
+        // robot.resetTurret();
     }
 }
