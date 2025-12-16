@@ -15,7 +15,6 @@ import com.qualcomm.robotcore.hardware.Servo;
 
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-
 @Disabled
 @Autonomous(name = "REVStarterBotTeleOpAuto_birinci_kod (Blocks to Java)")
 
